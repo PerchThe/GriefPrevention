@@ -581,95 +581,20 @@ import me.ryanhamshire.GriefPrevention.util.SchedulerUtil;
  
          //if requires access trust, check for permission
          if (accessTrustCommands.isMonitoredCommand(command))
-        {
-            Claim deepestClaim = findDeepestContainingClaim(playerData.lastClaim, player.getLocation());
-            if (deepestClaim != null)
-            {
-                playerData.lastClaim = deepestClaim;
-                Supplier<String> reason = deepestClaim.checkPermission(player, ClaimPermission.Access, event);
-                if (reason != null)
-                {
-                    GriefPrevention.sendMessage(player, TextMode.Err, reason.get());
-                    event.setCancelled(true);
-                    return;
-                }
-            }
-        }
-    }
-
-    private Claim findDeepestContainingClaim(@org.jetbrains.annotations.Nullable Claim start,
-                                             @org.jetbrains.annotations.Nullable Location location)
-    {
-        if (start == null || location == null)
-        {
-            return start;
-        }
-
-        Claim current = start;
-        while (true)
-        {
-            Claim bestChild = null;
-
-            for (Claim child : current.children)
-            {
-                if (child == null || !child.inDataStore)
-                {
-                    continue;
-                }
-
-                if (!child.contains(location, false, false))
-                {
-                    continue;
-                }
-
-                if (bestChild == null || isMoreSpecificChild(child, bestChild, location))
-                {
-                    bestChild = child;
-                }
-            }
-
-            if (bestChild == null)
-            {
-                break;
-            }
-
-            current = bestChild;
-        }
-
-        return current;
-    }
-
-    private boolean isMoreSpecificChild(@org.jetbrains.annotations.NotNull Claim candidate,
-                                        @org.jetbrains.annotations.NotNull Claim incumbent,
-                                        @org.jetbrains.annotations.NotNull Location location)
-    {
-        boolean candidate3D = candidate.is3D();
-        boolean incumbent3D = incumbent.is3D();
-
-        if (candidate3D != incumbent3D)
-        {
-            if (candidate3D && candidate.containsY(location.getBlockY()))
-            {
-                return true;
-            }
-            if (incumbent3D && incumbent.containsY(location.getBlockY()))
-            {
-                return false;
-            }
-        }
-
-        if (candidate3D && incumbent3D)
-        {
-            int candidateHeight = candidate.getGreaterBoundaryCorner().getBlockY() - candidate.getLesserBoundaryCorner().getBlockY();
-            int incumbentHeight = incumbent.getGreaterBoundaryCorner().getBlockY() - incumbent.getLesserBoundaryCorner().getBlockY();
-            if (candidateHeight != incumbentHeight)
-            {
-                return candidateHeight < incumbentHeight;
-            }
-        }
-
-        return candidate.getArea() < incumbent.getArea();
-    }
+         {
+             Claim claim = this.dataStore.getClaimAt(player.getLocation(), false, playerData.lastClaim);
+             if (claim != null)
+             {
+                 playerData.lastClaim = claim;
+                 Supplier<String> reason = claim.checkPermission(player, ClaimPermission.Access, event);
+                 if (reason != null)
+                 {
+                     GriefPrevention.sendMessage(player, TextMode.Err, reason.get());
+                     event.setCancelled(true);
+                 }
+             }
+         }
+     }
 
      private CommandCategory getCommandCategory(MonitorableCommand command)
      {
@@ -2204,8 +2129,10 @@ import me.ryanhamshire.GriefPrevention.util.SchedulerUtil;
                 // Fallback to ignore-height search to preserve legacy behavior when no 3D subclaim matches Y
                 resolvedClaim = this.dataStore.getClaimAt(clickedBlock.getLocation(), true /* ignore height */, playerData.lastClaim);
             }
-            Claim claim = findDeepestContainingClaim(resolvedClaim, clickedBlock.getLocation());
-            if (claim != null)
+             Claim claim = resolvedClaim;
+            // If this click is exactly at a shared corner between a child and its parent, favor the parent for resizing.
+
+             if (claim != null && claim.parent != null)
             {
                 playerData.lastClaim = claim;
             }
