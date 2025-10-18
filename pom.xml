@@ -22,7 +22,6 @@
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <!-- Default empty argument line to prevent Surefire config causing crashes if no other JVM args are set. -->
         <argLine/>
     </properties>
 
@@ -40,6 +39,10 @@
         <repository>
             <id>spigot-repo</id>
             <url>https://hub.spigotmc.org/nexus/content/repositories/snapshots/</url>
+        </repository>
+        <repository>
+            <id>placeholderapi-repo</id>
+            <url>https://repo.extendedclip.com/releases/</url>
         </repository>
     </repositories>
 
@@ -60,7 +63,6 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.14.0</version>
             </plugin>
-            <!-- Append git commit hash to version -->
             <plugin>
                 <groupId>io.github.git-commit-id</groupId>
                 <artifactId>git-commit-id-maven-plugin</artifactId>
@@ -90,7 +92,6 @@
                 <executions>
                     <execution>
                         <goals>
-                            <!-- Required to inflate Mockito jar location. -->
                             <goal>properties</goal>
                         </goals>
                     </execution>
@@ -100,15 +101,8 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <!-- Add Mockito agent and retain existing JVM args, if any. -->
                     <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar} -Xshare:off</argLine>
-                    <!-- GitHub Actions offers 2 cores for Linux. -->
                     <forkCount>2</forkCount>
-                    <!--
-                        This is somewhat required for testing Bukkit code due to Bukkit's design.
-                        There are so many static fields so deeply intertwined with each other
-                        that correctly initializing everything is a huge hassle.
-                     -->
                     <reuseForks>false</reuseForks>
                 </configuration>
             </plugin>
@@ -156,21 +150,30 @@
     </build>
 
     <dependencies>
-        <!-- Bukkit API. Bukkit has never ever deployed a release version -->
+        <!-- Bukkit API -->
         <dependency>
             <groupId>org.spigotmc</groupId>
             <artifactId>spigot-api</artifactId>
             <version>1.21.8-R0.1-SNAPSHOT</version>
             <scope>provided</scope>
         </dependency>
-        <!-- Annotations for nullity and other behaviors -->
+
+        <!-- PlaceholderAPI -->
+        <dependency>
+            <groupId>me.clip</groupId>
+            <artifactId>placeholderapi</artifactId>
+            <version>2.11.6</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- JetBrains annotations -->
         <dependency>
             <groupId>org.jetbrains</groupId>
             <artifactId>annotations</artifactId>
             <version>26.0.2</version>
-            <!-- Annotations are not required at runtime, only during compilation. -->
             <scope>provided</scope>
         </dependency>
+
         <!-- Tests -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
