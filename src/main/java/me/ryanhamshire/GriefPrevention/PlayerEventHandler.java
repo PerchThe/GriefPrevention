@@ -24,6 +24,8 @@
  import com.griefprevention.visualization.BoundaryVisualization;
  import com.griefprevention.visualization.VisualizationType;
  import me.ryanhamshire.GriefPrevention.events.ClaimInspectionEvent;
+ import org.bukkit.event.EventPriority;
+ import org.bukkit.event.player.PlayerMoveEvent;
  import me.ryanhamshire.GriefPrevention.util.BoundingBox;
  import org.bukkit.BanList;
  import org.bukkit.Bukkit;
@@ -470,6 +472,27 @@ import me.ryanhamshire.GriefPrevention.util.SchedulerUtil;
          }
      }
 
+     @EventHandler(ignoreCancelled = true, priority = EventPriority.MONITOR)
+     public void onPlayerMove(PlayerMoveEvent event) {
+         // Only process when player actually moves between blocks (cheap check)
+         if (event.getFrom().getBlockX() == event.getTo().getBlockX()
+                 && event.getFrom().getBlockY() == event.getTo().getBlockY()
+                 && event.getFrom().getBlockZ() == event.getTo().getBlockZ()) {
+             return;
+         }
+
+         Player player = event.getPlayer();
+         PlayerData playerData = GriefPrevention.instance.dataStore.getPlayerData(player.getUniqueId());
+
+         // Use lastClaim as a hint for performance where available
+         Claim currentClaim = GriefPrevention.instance.dataStore.getClaimAt(event.getTo(), true, playerData.lastClaim);
+
+         // Only set when changed
+         if (currentClaim != playerData.lastClaim) {
+             playerData.lastClaim = currentClaim;
+         }
+     }
+
 
      //when a player uses a slash command...
      @EventHandler(ignoreCancelled = true, priority = EventPriority.LOWEST)
@@ -597,47 +620,52 @@ import me.ryanhamshire.GriefPrevention.util.SchedulerUtil;
         }
     }
 
-    private Claim findDeepestContainingClaim(@org.jetbrains.annotations.Nullable Claim start,
-                                             @org.jetbrains.annotations.Nullable Location location)
-    {
-        if (start == null || location == null)
-        {
-            return start;
-        }
+     private Claim findDeepestContainingClaim(@org.jetbrains.annotations.Nullable Claim start,
+                                              @org.jetbrains.annotations.Nullable Location location)
+     {
+         if (start == null || location == null)
+         {
+             return start;
+         }
 
-        Claim current = start;
-        while (true)
-        {
-            Claim bestChild = null;
+         Claim current = start;
+         while (true)
+         {
+             Claim bestChild = null;
 
-            for (Claim child : current.children)
-            {
-                if (child == null || !child.inDataStore)
-                {
-                    continue;
-                }
+             for (Claim child : current.children)
+             {
+                 if (child == null || !child.inDataStore)
+                 {
+                     continue;
+                 }
 
-                if (!child.contains(location, false, false))
-                {
-                    continue;
-                }
+                 // Respect 3D subclaim Y bounds. For 3D children we must NOT ignore height (ignoreHeight = false).
+                 // For 2D children (top-level style) they span full height, so set ignoreHeight = true.
+                 boolean ignoreHeightForChild = !child.is3D();
 
-                if (bestChild == null || isMoreSpecificChild(child, bestChild, location))
-                {
-                    bestChild = child;
-                }
-            }
+                 if (!child.contains(location, ignoreHeightForChild, false))
+                 {
+                     continue;
+                 }
 
-            if (bestChild == null)
-            {
-                break;
-            }
+                 if (bestChild == null || isMoreSpecificChild(child, bestChild, location))
+                 {
+                     bestChild = child;
+                 }
+             }
 
-            current = bestChild;
-        }
+             if (bestChild == null)
+             {
+                 break;
+             }
 
-        return current;
-    }
+             current = bestChild;
+         }
+
+         return current;
+     }
+
 
     private boolean isMoreSpecificChild(@org.jetbrains.annotations.NotNull Claim candidate,
                                         @org.jetbrains.annotations.NotNull Claim incumbent,

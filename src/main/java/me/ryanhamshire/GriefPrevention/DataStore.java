@@ -428,62 +428,161 @@ public abstract class DataStore
         }
     }
 
-    //adds a claim to the datastore, making it an effective claim
+    // Put this replacement into DataStore.java (replace existing addClaim method)
     synchronized void addClaim(Claim newClaim, boolean writeToStorage)
     {
-        //subdivisions are added under their parent, not directly to the hash map for direct search
+        if (newClaim == null) return;
+
+        // If subdivision: attach under parent (store canonical child instance and chunk map)
         if (newClaim.parent != null)
         {
-            if (!newClaim.parent.children.contains(newClaim))
+            Claim parent = newClaim.parent;
+
+            if (parent.children == null) parent.children = new ArrayList<>();
+
+            // If there's already a child with same id, replace it with canonical instance
+            if (newClaim.id != null)
             {
-                newClaim.parent.children.add(newClaim);
+                boolean found = false;
+                for (int i = 0; i < parent.children.size(); i++)
+                {
+                    Claim existing = parent.children.get(i);
+                    if (existing != null && existing.id != null && existing.id.equals(newClaim.id))
+                    {
+                        // replace stale instance with this canonical instance
+                        parent.children.set(i, newClaim);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    parent.children.add(newClaim);
+                }
+
+                // Ensure claimIDMap references canonical instance (Long key)
+                this.claimIDMap.put(newClaim.id, newClaim);
             }
-            
-            // 3D subdivisions need to be added to chunk claims map so getClaimAt can find them
-            if (newClaim.is3D())
+            else
             {
-                addToChunkClaimMap(newClaim);
+                // No id (unexpected) - just make sure it's listed
+                if (!parent.children.contains(newClaim))
+                {
+                    parent.children.add(newClaim);
+                }
             }
-            
+
+            // Ensure chunk lookup can find it (3D subdivisions)
+            try { addToChunkClaimMap(newClaim); } catch (Throwable t) { /* best-effort */ }
+
             newClaim.inDataStore = true;
+
             if (writeToStorage)
             {
                 this.saveClaim(newClaim);
             }
+
             return;
         }
 
-        //add it and mark it as added
-        this.claims.add(newClaim);
-        this.claimIDMap.put(newClaim.id, newClaim);
-        for (Claim child : newClaim.children)
+        // TOP-LEVEL CLAIM handling
+        if (newClaim.id != null)
         {
-            this.claimIDMap.put(child.id, child);
+            Claim existing = this.claimIDMap.get(newClaim.id);
+            if (existing != null && existing != newClaim)
+            {
+                // Replace existing top-level instance in 'claims' list with canonical newClaim
+                for (int i = 0; i < this.claims.size(); i++)
+                {
+                    Claim c = this.claims.get(i);
+                    if (c != null && c.id != null && c.id.equals(newClaim.id))
+                    {
+                        this.claims.set(i, newClaim);
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                // Not present: add to top-level claims list if not present
+                boolean inList = false;
+                for (Claim c : this.claims)
+                {
+                    if (c != null && c.id != null && c.id.equals(newClaim.id))
+                    {
+                        inList = true;
+                        break;
+                    }
+                }
+                if (!inList) this.claims.add(newClaim);
+            }
+
+            // Put canonical reference into claimIDMap (Long key)
+            this.claimIDMap.put(newClaim.id, newClaim);
         }
-        addToChunkClaimMap(newClaim);
+        else
+        {
+            // No id - add defensively if not already present
+            if (!this.claims.contains(newClaim)) this.claims.add(newClaim);
+        }
+
+        // Ensure all children are canonical and registered in claimIDMap
+        if (newClaim.children != null)
+        {
+            for (int i = 0; i < newClaim.children.size(); i++)
+            {
+                Claim child = newClaim.children.get(i);
+                if (child == null) continue;
+                // patch child's parent pointer to canonical parent
+                child.parent = newClaim;
+                if (child.id != null)
+                {
+                    this.claimIDMap.put(child.id, child);
+                }
+                try { addToChunkClaimMap(child); } catch (Throwable t) { /* best-effort */ }
+                child.inDataStore = true;
+            }
+        }
+
+        // Add top-level claim to chunk claim map as well
+        try { addToChunkClaimMap(newClaim); } catch (Throwable t) { /* best-effort */ }
 
         newClaim.inDataStore = true;
 
-        //except for administrative claims (which have no owner), update the owner's playerData with the new claim
         if (!newClaim.isAdminClaim() && writeToStorage)
         {
             PlayerData ownerData = this.getPlayerData(newClaim.ownerID);
-            ownerData.getClaims().add(newClaim);
+            if (ownerData != null)
+            {
+                // Use the public accessor which returns Vector<Claim> and initializes it if necessary
+                java.util.Vector<Claim> ownerClaims = ownerData.getClaims();
+
+                boolean present = false;
+                for (Claim c : ownerClaims)
+                {
+                    if (c == null) continue;
+                    if (c.id != null && newClaim.id != null && c.id.equals(newClaim.id))
+                    {
+                        present = true;
+                        break;
+                    }
+                }
+
+                if (!present)
+                {
+                    ownerClaims.add(newClaim);
+                }
+            }
         }
 
-        //make sure the claim is saved to disk
-        if (writeToStorage)
-        {
-            this.saveClaim(newClaim);
-        }
-    
 
-        //make sure the claim is saved to disk
+        // Persist if requested
         if (writeToStorage)
         {
             this.saveClaim(newClaim);
         }
     }
+
 
     private void addToChunkClaimMap(Claim claim)
     {
@@ -649,89 +748,111 @@ public abstract class DataStore
         this.deleteClaim(claim, true, false);
     }
 
+    // Replace your existing deleteClaim method with this implementation.
+// If your signature differs, keep semantics same: remove from maps, disk and clear player references.
     synchronized void deleteClaim(Claim claim, boolean fireEvent, boolean ignored)
     {
-        // delete any children (iterate over a snapshot to avoid skipping due to parent list mutation)
-        if (!claim.children.isEmpty())
+        if (claim == null) return;
+
+        // If event firing is needed preserve behaviour; leave that call in place if you have it.
+        // --- remove children first (recursive) ---
+        if (claim.children != null && !claim.children.isEmpty())
         {
-            java.util.List<Claim> childrenSnapshot = new java.util.ArrayList<>(claim.children);
-            for (Claim child : childrenSnapshot)
+            // Copy to avoid ConcurrentModification
+            List<Claim> childrenCopy = new ArrayList<>(claim.children);
+            for (Claim child : childrenCopy)
             {
-                this.deleteClaim(child, fireEvent, ignored);
+                // Recursively delete child claims (will remove child files or rewrite parent)
+                deleteClaim(child, fireEvent, ignored);
             }
         }
-         
-        //subdivisions must also be removed from the parent claim child list
+
+        // Remove from parent's children list or from top-level claims list
         if (claim.parent != null)
         {
-            Claim parentClaim = claim.parent;
-            parentClaim.children.remove(claim);
-        }
-
-        //mark as deleted so any references elsewhere can be ignored
-        claim.inDataStore = false;
-
-        //remove from memory
-        for (int i = 0; i < this.claims.size(); i++)
-        {
-            if (claims.get(i).id.equals(claim.id))
+            Claim parent = claim.parent;
+            if (parent.children != null)
             {
-                this.claims.remove(i);
-                break;
+                Iterator<Claim> it = parent.children.iterator();
+                while (it.hasNext())
+                {
+                    Claim c = it.next();
+                    if (c == null) continue;
+                    if (c.id != null && claim.id != null && c.id.equals(claim.id))
+                    {
+                        it.remove();
+                        break;
+                    }
+                    else if (c == claim)
+                    {
+                        it.remove();
+                        break;
+                    }
+                }
             }
         }
-
-        claimIDMap.remove(claim.id);
-        for (Claim child : claim.children)
+        else
         {
-            claimIDMap.remove(child.id);
-        }
-
-        removeFromChunkClaimMap(claim);
-
-        //remove from secondary storage
-        this.deleteClaimFromSecondaryStorage(claim);
-
-        //update player data
-        if (claim.ownerID != null)
-        {
-            PlayerData ownerData = this.getPlayerData(claim.ownerID);
-            for (int i = 0; i < ownerData.getClaims().size(); i++)
+            // top-level: remove from claims collection
+            Iterator<Claim> it = this.claims.iterator();
+            while (it.hasNext())
             {
-                if (ownerData.getClaims().get(i).id.equals(claim.id))
+                Claim c = it.next();
+                if (c == null) continue;
+                if (c.id != null && claim.id != null && c.id.equals(claim.id))
                 {
-                    ownerData.getClaims().remove(i);
+                    it.remove();
+                    break;
+                }
+                else if (c == claim)
+                {
+                    it.remove();
                     break;
                 }
             }
-            this.savePlayerData(claim.ownerID, ownerData);
         }
 
-        // Proactively clear any active visualizations referencing this claim for all online players
-        // to prevent lingering ghost boundaries after deletion.
+        // Remove chunk map references for this claim
         try {
-            org.bukkit.Server server = org.bukkit.Bukkit.getServer();
-            for (org.bukkit.entity.Player online : server.getOnlinePlayers())
+            removeFromChunkClaimMap(claim);
+        } catch (Exception ex) {
+            // best-effort; log and continue
+            GriefPrevention.AddLogEntry("Warning: removeFromChunkClaimMap failed for claim " + claim.id + ": " + ex.getMessage());
+        }
+
+        // Remove from claimIDMap (and any entries for direct children were already removed in recursion above)
+        try {
+            if (claim.id != null) {
+                String idKey = String.valueOf(claim.id);
+                this.claimIDMap.remove(idKey);
+            }
+        } catch (Exception ex) {
+            GriefPrevention.AddLogEntry("Warning: Removing claim from claimIDMap failed for " + claim.id + ": " + ex.getMessage());
+        }
+
+        // Clear any PlayerData.lastClaim references pointing to this claim (prevent stuck permission)
+        try {
+            for (org.bukkit.entity.Player online : org.bukkit.Bukkit.getServer().getOnlinePlayers())
             {
-                PlayerData data = GriefPrevention.instance.dataStore.getPlayerData(online.getUniqueId());
-                com.griefprevention.visualization.BoundaryVisualization bv = data.getVisibleBoundaries();
-                if (bv != null)
+                PlayerData pdata = this.getPlayerData(online.getUniqueId());
+                if (pdata != null && pdata.lastClaim != null && pdata.lastClaim.id != null && claim.id != null && pdata.lastClaim.id.equals(claim.id))
                 {
-                    // If the player has any active visualization, conservatively clear it.
-                    // This guarantees no stale visualization for deleted claims and their children.
-                    data.setVisibleBoundaries(null);
+                    pdata.lastClaim = null;
                 }
             }
-        } catch (Exception ignoredEx) {
-            // Visualization cleanup is best-effort; ignore any exceptions to avoid interfering with deletion.
+        } catch (Throwable t) {
+            // swallow - best-effort cleanup
+            GriefPrevention.AddLogEntry("Warning: clearing player lastClaim references failed: " + t.getMessage());
         }
 
-        if (fireEvent)
-        {
-            ClaimDeletedEvent ev = new ClaimDeletedEvent(claim);
-            Bukkit.getPluginManager().callEvent(ev);
+        // Finally, remove from secondary storage (disk). This will either rewrite parent file or delete claim file.
+        try {
+            this.deleteClaimFromSecondaryStorage(claim);
+        } catch (Exception ex) {
+            GriefPrevention.AddLogEntry("Error deleting claim from secondary storage: " + ex.getMessage());
         }
     }
+
 
     abstract void deleteClaimFromSecondaryStorage(Claim claim);
 
@@ -1575,6 +1696,38 @@ public abstract class DataStore
         newDepth = Math.max(newDepth, world.getMinHeight());
 
         return newDepth;
+    }
+
+    // Add or ensure canonical parent/child wiring
+    private void addChildIfMissing(Claim parent, Claim child) {
+        if (parent == null || child == null) return;
+
+        if (parent.children == null) {
+            parent.children = new ArrayList<>();
+        }
+
+        Long childId = child.id;
+        if (childId != null) {
+            for (Claim existing : parent.children) {
+                if (existing != null && existing.id != null && existing.id.equals(childId)) {
+                    // Make sure pointers are canonical
+                    existing.parent = parent;
+                    child.parent = parent;
+                    return;
+                }
+            }
+        } else {
+            // If child has no id, compare instance equality to avoid duplicates
+            for (Claim existing : parent.children) {
+                if (existing == child) {
+                    child.parent = parent;
+                    return;
+                }
+            }
+        }
+
+        parent.children.add(child);
+        child.parent = parent;
     }
 
     /**

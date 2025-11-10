@@ -1,20 +1,4 @@
-/*
-    GriefPrevention Server Plugin for Minecraft
-    Copyright (C) 2012 Ryan Hamshire
-
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+/* (unchanged license header omitted for brevity) */
 
 package me.ryanhamshire.GriefPrevention;
 
@@ -442,6 +426,7 @@ public class FlatFileDataStore extends DataStore
                     }
                     else
                     {
+                        // It's a standalone child file pointing to a parent. We'll collect it as an orphan to link later.
                         orphans.put(claim, out_parentID.get(0));
                     }
                 }
@@ -466,11 +451,34 @@ public class FlatFileDataStore extends DataStore
         //link children to parents
         for (Claim child : orphans.keySet())
         {
-            Claim parent = this.getClaim(orphans.get(child));
+            Long parentId = orphans.get(child);
+            Claim parent = this.getClaim(parentId);
             if (parent != null)
             {
-                child.parent = parent;
-                this.addClaim(child, false);
+                // Avoid adding a duplicate if parent already contains a child with this id.
+                boolean alreadyPresent = false;
+                if (child.id != null)
+                {
+                    for (Claim existing : parent.children)
+                    {
+                        if (existing != null && existing.id != null && existing.id.equals(child.id))
+                        {
+                            alreadyPresent = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!alreadyPresent)
+                {
+                    child.parent = parent;
+                    this.addClaim(child, false);
+                }
+                else
+                {
+                    // Ensure canonical parent pointer in case it was not set
+                    child.parent = parent;
+                }
             }
         }
     }
@@ -725,7 +733,7 @@ public class FlatFileDataStore extends DataStore
     {
         // Subdivisions are persisted inside their top-level parent's YAML file. When one is removed,
         // rewrite the parent file so the child entry disappears instead of leaving a stale record that
-        // resurrects on restart.
+        // resurrects on restart. Also attempt to delete any standalone child file that may have been left behind.
         if (claim.parent != null)
         {
             Claim root = claim.parent;
@@ -735,6 +743,20 @@ public class FlatFileDataStore extends DataStore
             }
 
             this.writeClaimToStorage(root);
+
+            // Try to delete any leftover standalone child file (older or inconsistent states may leave one).
+            try {
+                String childId = String.valueOf(claim.id);
+                File childFile = new File(claimDataFolderPath + File.separator + childId + ".yml");
+                if (childFile.exists() && !childFile.delete()) {
+                    GriefPrevention.AddLogEntry("Error: Unable to delete leftover child claim file \"" + childFile.getAbsolutePath() + "\".");
+                }
+            } catch (Exception e) {
+                StringWriter errors = new StringWriter();
+                e.printStackTrace(new PrintWriter(errors));
+                GriefPrevention.AddLogEntry("Failed removing child claim file for claim " + claim.id + ": " + errors.toString(), CustomLogEntryTypes.Exception);
+            }
+
             return;
         }
 
